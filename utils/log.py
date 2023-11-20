@@ -2,7 +2,7 @@
 Author: Night-stars-1 nujj1042633805@gmail.com
 Date: 2023-05-15 21:45:43
 LastEditors: Night-stars-1 nujj1042633805@gmail.com
-LastEditTime: 2023-05-29 13:46:22
+LastEditTime: 2023-07-17 23:26:54
 Description: 
 
 Copyright (c) 2023 by Night-stars-1, All Rights Reserved. 
@@ -11,10 +11,21 @@ import os
 import re
 import sys
 import orjson
+import gettext
+
+from pathlib import Path
+from copy import copy
 from loguru import logger
 
 message = ""
 
+class FileFilter:
+    def __init__(self, file):
+        self.file = file
+
+    def __call__(self, record):
+        return record["extra"].get("file") == self.file
+    
 def normalize_file_path(filename):
     # 尝试在当前目录下读取文件
     current_dir = os.getcwd()
@@ -50,6 +61,22 @@ def read_json_file(filename: str, path=False):
                 return data
     else:
         return {}
+    
+def get_folder(path) -> list[str]:
+    """
+    获取文件夹下的文件夹列表
+    """
+    for root, dirs, files in os.walk(path):
+        return dirs
+
+language = read_json_file("config.json").get("language", "zh_CN")
+if getattr(sys, 'frozen', None):
+    dir = sys._MEIPASS
+else:
+    dir = Path()
+locale_path = os.path.join(dir, "locale")
+t = gettext.translation('sra', locale_path, [language])
+_ = t.gettext
 
 def get_message(*arg):
     """
@@ -61,27 +88,43 @@ def get_message(*arg):
     global message
     if arg:
         content = arg[0][:-1].replace("\x1b[0;34;40m","").replace("-1\x1b[0m","")
-        if re.match(r'开始(.*)锄地',content):
+        if re.match(_(r'开始(.*)锄地'),content):
             message += f"\n{content}"
     return message
 
-data = read_json_file("config.json")
-VER = str(data.get("star_version",0))+"/"+str(data.get("temp_version",0))+"/"+str(data.get("map_version",0))
-level = data.get("level","INFO")
-log = logger
 dir_log = "logs"
-path_log = os.path.join(dir_log, '日志文件.log')
-logger.remove()
-logger.add(sys.stdout, level=level, colorize=True,
+data = read_json_file("config.json")
+VER = str(data.get("star_version",0))+"/"+str(data.get("picture_version",0))+"/"+str(data.get("map_version",0))
+path_log = os.path.join(dir_log, _('日志文件.log'))
+fight_path_log = os.path.join(dir_log, _('战斗日志.log'))
+level = data.get("level","INFO")
+log = logger.bind(file=path_log)
+fight_log = logger.bind(file=fight_path_log)
+log.remove()
+
+stdout_log = log.add(sys.stdout, level=level, colorize=True,
             format="<cyan>{module}</cyan>.<cyan>{function}</cyan>"
                     ":<cyan>{line}</cyan> - "+f"<cyan>{VER}</cyan> - "
-                    "<level>{message}</level>"
-            )
+                    "<level>{message}</level>",filter=FileFilter(path_log))
 
 #logger.add(get_message, level=level,format="{message}")
 
-logger.add(path_log,
+log.add(path_log,
             format="{time:HH:mm:ss} - "
                     "{level}\t| "
                     "{module}.{function}:{line} - "+f"<cyan>{VER}</cyan> - "+" {message}",
-            rotation='0:00', enqueue=True, serialize=False, encoding="utf-8", retention="10 days")
+            rotation="1 days", enqueue=True, serialize=False, encoding="utf-8", retention="10 days",filter=FileFilter(path_log))
+
+fight_log.add(fight_path_log,
+            format="{time:HH:mm:ss} - "
+                    "{level}\t| "
+                    "{module}.{function}:{line} - "+f"<cyan>{VER}</cyan> - "+" {message}",
+            rotation="1 days", enqueue=True, serialize=False, encoding="utf-8", retention="10 days",filter=FileFilter(fight_path_log))
+
+def set_log(header:str):
+    global stdout_log
+    global level
+    log.remove(stdout_log)
+    stdout_log = log.add(sys.stdout, level=level, colorize=True,
+                format=f"<cyan>{header}</cyan> - "+f"<cyan>{VER}</cyan> - "
+                        "<level>{message}</level>",filter=FileFilter(path_log))
